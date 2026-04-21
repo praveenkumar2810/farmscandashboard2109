@@ -205,6 +205,17 @@ textarea{resize:vertical;min-height:68px;}
 .leaflet-popup-content{margin:10px 14px!important;font-size:12px!important;}
 .corr-poly{cursor:default;}
 
+/* LOCKED (>1.5ha) farms */
+.locked-banner {
+  margin-top:8px;padding:6px 10px;
+  background:rgba(255,123,114,.12);border:1px solid var(--orange);
+  border-radius:6px;font-size:11px;color:var(--orange);
+  display:none;align-items:center;gap:6px;
+}
+.locked-banner.show{display:flex;}
+.stat-pill .lock-dot{width:6px;height:6px;border-radius:50%;background:var(--orange);}
+
+
 @media(max-width:768px){
   :root{--pw:100vw;}
   #panel{position:absolute;right:0;height:100%;z-index:500;transform:translateX(100%);}
@@ -238,6 +249,7 @@ textarea{resize:vertical;min-height:68px;}
   <div class="pill"><div class="ld"></div><span class="v" id="sdone">0</span>&nbsp;labeled</div>
   <div class="pill">⏳&nbsp;<span class="v" id="spend">1793</span>&nbsp;pending</div>
   <div class="pill">✏️&nbsp;<span class="v" id="scorr">0</span>&nbsp;corrected</div>
+  <div class="pill"><span style="color:var(--orange)">🔒</span>&nbsp;<span class="v" id="slocked">0</span>&nbsp;held</div>
   <button id="ebtn" onclick="openExportModal()">↓ Export ▾</button>
 </div>
 
@@ -263,6 +275,7 @@ textarea{resize:vertical;min-height:68px;}
     <div class="lr"><div class="ls" style="background:var(--purple);opacity:.75"></div><div class="ll">Boundary Corrected</div></div>
     <div class="lr"><div class="ls" style="background:var(--blue);opacity:.6"></div><div class="ll">Selected</div></div>
     <div class="lr"><div class="ls" style="background:#8b949e;opacity:.4"></div><div class="ll">Unlabeled</div></div>
+    <div class="lr"><div class="ls" style="background:#ff7b72;opacity:.5;border:1px dashed #ff7b72"></div><div class="ll">Hold (&gt;1.5 Ha)</div></div>
   </div>
 
   <button id="ptoggle" onclick="document.getElementById('panel').classList.toggle('visible')">☰</button>
@@ -280,6 +293,8 @@ textarea{resize:vertical;min-height:68px;}
         <div class="ei">🗺</div>
         <p>Tap any farm polygon on the map<br>to begin annotation</p>
       </div>
+      
+      <div id="lockb" class="locked-banner">🔒 <span id="locktxt">Farm &gt;1.5 Ha — held, not for labelling</span></div>
       <div id="corrb">✏️ <span id="corrtxt">Boundary correction recorded</span></div>
     </div>
 
@@ -513,29 +528,167 @@ const FARMS_GEOJSON = {"type":"FeatureCollection","features":[{"id":"0","type":"
 </script>
 <script>
 // ── CROP AUTOCOMPLETE DB ──────────────────────
-const CROPS=[
-  {n:'Rice / Paddy',c:'Cereal'},{n:'Wheat',c:'Cereal'},{n:'Maize / Corn',c:'Cereal'},
-  {n:'Jowar / Sorghum',c:'Cereal'},{n:'Bajra / Pearl Millet',c:'Cereal'},
-  {n:'Ragi / Finger Millet',c:'Cereal'},{n:'Barley',c:'Cereal'},
-  {n:'Tur / Pigeon Pea',c:'Pulse'},{n:'Chana / Chickpea',c:'Pulse'},
-  {n:'Urad / Black Gram',c:'Pulse'},{n:'Moong / Green Gram',c:'Pulse'},
-  {n:'Masoor / Lentil',c:'Pulse'},{n:'Rajma / Kidney Bean',c:'Pulse'},
-  {n:'Cotton',c:'Cash Crop'},{n:'Sugarcane',c:'Cash Crop'},{n:'Tobacco',c:'Cash Crop'},
-  {n:'Groundnut',c:'Cash Crop'},{n:'Sunflower',c:'Cash Crop'},{n:'Sesame / Til',c:'Cash Crop'},
-  {n:'Soybean',c:'Cash Crop'},{n:'Castor',c:'Cash Crop'},
-  {n:'Tomato',c:'Vegetable'},{n:'Onion',c:'Vegetable'},{n:'Potato',c:'Vegetable'},
-  {n:'Chilli',c:'Vegetable'},{n:'Brinjal',c:'Vegetable'},{n:'Okra / Bhindi',c:'Vegetable'},
-  {n:'Cauliflower',c:'Vegetable'},{n:'Cabbage',c:'Vegetable'},{n:'Mixed Vegetables',c:'Vegetable'},
-  {n:'Banana',c:'Fruit'},{n:'Mango',c:'Fruit'},{n:'Papaya',c:'Fruit'},
-  {n:'Pomegranate',c:'Fruit'},{n:'Grapes',c:'Fruit'},{n:'Guava',c:'Fruit'},
-  {n:'Turmeric',c:'Spice'},{n:'Ginger',c:'Spice'},{n:'Garlic',c:'Spice'},
-  {n:'Coriander',c:'Spice'},{n:'Mixed / Intercrop',c:'Other'},{n:'Fallow / No Crop',c:'Other'},
-];
+// ── CROP DATABASE (PIB Govt. of India — classified by feature type) ──────────
+// Each crop has: n=name, c=category, t=feature_types[] (which feature types show it)
+// t: 'field'=Agricultural Land/Fallow, 'plantation'=Plantation, 'orchard'=Orchard,
+//    'horti'=Horticulture general, 'all'=any
+const CROP_DB = {
+
+  // ═══ FIELD CROPS (show for: Agricultural Land, Fallow Land) ═══
+
+  CEREALS: [
+    {n:'Rice / Paddy',c:'Cereals'},{n:'Wheat',c:'Cereals'},{n:'Durum Wheat',c:'Cereals'},
+    {n:'Barley',c:'Cereals'},{n:'Maize / Corn',c:'Cereals'},{n:'Sorghum / Jowar',c:'Cereals'},
+    {n:'Pearl Millet / Bajra',c:'Cereals'},{n:'Finger Millet / Ragi',c:'Cereals'},
+    {n:'Proso Millet',c:'Cereals'},{n:'Barnyard Millet',c:'Cereals'},
+    {n:'Foxtail Millet',c:'Cereals'},{n:'Kodo Millet',c:'Cereals'},
+  ],
+
+  PULSES: [
+    {n:'Chickpea / Chana',c:'Pulses'},{n:'Pigeon Pea / Tur / Arhar',c:'Pulses'},
+    {n:'Lentil / Masoor',c:'Pulses'},{n:'Field Pea',c:'Pulses'},
+    {n:'Faba Bean',c:'Pulses'},{n:'Mung Bean / Green Gram',c:'Pulses'},
+    {n:'Urad / Black Gram',c:'Pulses'},{n:'Rajma / Kidney Bean',c:'Pulses'},
+    {n:'Moth Bean',c:'Pulses'},{n:'Horse Gram',c:'Pulses'},
+  ],
+
+  OILSEEDS: [
+    {n:'Groundnut',c:'Oilseeds'},{n:'Soybean',c:'Oilseeds'},
+    {n:'Sunflower',c:'Oilseeds'},{n:'Safflower',c:'Oilseeds'},
+    {n:'Sesame / Til',c:'Oilseeds'},{n:'Mustard / Rapeseed',c:'Oilseeds'},
+    {n:'Linseed / Flaxseed',c:'Oilseeds'},{n:'Castor',c:'Oilseeds'},
+    {n:'Nigerseed',c:'Oilseeds'},
+  ],
+
+  SUGAR_FIBRE: [
+    {n:'Sugarcane',c:'Sugar Crop'},{n:'Cotton',c:'Fibre Crop'},
+    {n:'Jute',c:'Fibre Crop'},{n:'Hemp',c:'Fibre Crop'},
+  ],
+
+  FORAGE: [
+    {n:'Forage Maize',c:'Forage Crop'},{n:'Forage Sorghum',c:'Forage Crop'},
+    {n:'Forage Pearl Millet',c:'Forage Crop'},{n:'Berseem',c:'Forage Crop'},
+    {n:'Oats (Fodder)',c:'Forage Crop'},{n:'Cowpea (Fodder)',c:'Forage Crop'},
+  ],
+
+  POTENTIAL: [
+    {n:'Buckwheat',c:'Potential Crop'},{n:'Amaranth / Rajgira',c:'Potential Crop'},
+    {n:'Winged Bean',c:'Potential Crop'},{n:'Adzuki Bean',c:'Potential Crop'},
+    {n:'Pillipesara',c:'Potential Crop'},{n:'Perilla',c:'Potential Crop'},
+  ],
+
+  // ═══ HORTICULTURAL FIELD CROPS (show for: Agricultural Land) ═══
+
+  VEGETABLES: [
+    {n:'Tomato',c:'Vegetable'},{n:'Onion',c:'Vegetable'},{n:'Potato',c:'Vegetable'},
+    {n:'Brinjal / Eggplant',c:'Vegetable'},{n:'Okra / Bhindi',c:'Vegetable'},
+    {n:'Chilli / Capsicum',c:'Vegetable'},{n:'Bottle Gourd',c:'Vegetable'},
+    {n:'Ridge Gourd',c:'Vegetable'},{n:'Bitter Gourd',c:'Vegetable'},
+    {n:'Ash Gourd',c:'Vegetable'},{n:'Pumpkin',c:'Vegetable'},
+    {n:'Cucumber',c:'Vegetable'},{n:'Muskmelon',c:'Vegetable'},
+    {n:'Watermelon',c:'Vegetable'},{n:'Cauliflower',c:'Vegetable'},
+    {n:'Cabbage',c:'Vegetable'},{n:'Spinach / Palak',c:'Vegetable'},
+    {n:'Coriander',c:'Vegetable'},{n:'Fenugreek / Methi',c:'Vegetable'},
+    {n:'Radish',c:'Vegetable'},{n:'Carrot',c:'Vegetable'},
+    {n:'Beans / Indian Beans',c:'Vegetable'},{n:'Cluster Beans / Guar',c:'Vegetable'},
+    {n:'Drumstick / Moringa',c:'Vegetable'},{n:'Taro / Arbi',c:'Vegetable'},
+    {n:'Sweet Potato',c:'Vegetable'},
+  ],
+
+  TUBERS: [
+    {n:'Potato',c:'Tuber Crop'},{n:'Tapioca / Cassava',c:'Tuber Crop'},
+    {n:'Sweet Potato',c:'Tuber Crop'},{n:'Elephant Yam / Suran',c:'Tuber Crop'},
+    {n:'Colocasia / Arbi',c:'Tuber Crop'},
+  ],
+
+  SPICES_FIELD: [
+    {n:'Turmeric',c:'Spice'},{n:'Ginger',c:'Spice'},{n:'Garlic',c:'Spice'},
+    {n:'Coriander (Seed)',c:'Spice'},{n:'Cumin / Jeera',c:'Spice'},
+    {n:'Fennel / Saunf',c:'Spice'},{n:'Ajwain',c:'Spice'},
+    {n:'Fenugreek (Seed)',c:'Spice'},{n:'Mango Ginger',c:'Spice'},
+  ],
+
+  MEDICINAL: [
+    {n:'Velvet Bean / Kaunch',c:'Medicinal'},{n:'Ashwagandha',c:'Medicinal'},
+    {n:'Brahmi / Mandukaparni',c:'Medicinal'},{n:'Aloe Vera',c:'Medicinal'},
+    {n:'Safed Musli',c:'Medicinal'},{n:'Shatavari',c:'Medicinal'},
+  ],
+
+  FLOWERS_FIELD: [
+    {n:'Marigold',c:'Flower'},{n:'Sunflower (Flower)',c:'Flower'},
+    {n:'Chrysanthemum',c:'Flower'},{n:'Crossandra',c:'Flower'},
+    {n:'Tuberose',c:'Flower'},{n:'Gladiolus',c:'Flower'},
+    {n:'Rose',c:'Flower'},{n:'Jasmine',c:'Flower'},
+  ],
+
+  // ═══ PLANTATION CROPS (show ONLY for: Plantation) ═══
+
+  PLANTATION: [
+    {n:'Cocoa',c:'Plantation'},{n:'Cashew',c:'Plantation'},
+    {n:'Coconut',c:'Plantation'},{n:'Arecanut / Betel Nut',c:'Plantation'},
+    {n:'Oil Palm',c:'Plantation'},{n:'Rubber',c:'Plantation'},
+    {n:'Coffee',c:'Plantation'},{n:'Tea',c:'Plantation'},
+    {n:'Cardamom (Large)',c:'Plantation'},{n:'Black Pepper',c:'Plantation'},
+    {n:'Nutmeg',c:'Plantation'},{n:'Clove',c:'Plantation'},
+    {n:'Cinnamon',c:'Plantation'},{n:'Vanilla',c:'Plantation'},
+    {n:'Banana (Plantation)',c:'Plantation'},{n:'Eucalyptus',c:'Plantation'},
+    {n:'Teak',c:'Plantation'},{n:'Bamboo',c:'Plantation'},
+    {n:'Sugarcane (Plantation Scale)',c:'Plantation'},
+    {n:'Small Cardamom',c:'Plantation'},{n:'Areca Palm',c:'Plantation'},
+  ],
+
+  // ═══ ORCHARD FRUITS (show for: Orchard) ═══
+
+  ORCHARD: [
+    {n:'Mango',c:'Orchard Fruit'},{n:'Pomegranate',c:'Orchard Fruit'},
+    {n:'Guava',c:'Orchard Fruit'},{n:'Banana',c:'Orchard Fruit'},
+    {n:'Papaya',c:'Orchard Fruit'},{n:'Citrus / Orange / Lemon',c:'Orchard Fruit'},
+    {n:'Pummelo',c:'Orchard Fruit'},{n:'Bael',c:'Orchard Fruit'},
+    {n:'Sapota / Chiku',c:'Orchard Fruit'},{n:'Jackfruit',c:'Orchard Fruit'},
+    {n:'Custard Apple / Sitaphal',c:'Orchard Fruit'},{n:'Ber / Indian Jujube',c:'Orchard Fruit'},
+    {n:'Aonla / Indian Gooseberry',c:'Orchard Fruit'},{n:'Tamarind',c:'Orchard Fruit'},
+    {n:'Litchi',c:'Orchard Fruit'},{n:'Grapes',c:'Orchard Fruit'},
+    {n:'Apple',c:'Orchard Fruit'},{n:'Pear',c:'Orchard Fruit'},
+    {n:'Peach',c:'Orchard Fruit'},{n:'Plum',c:'Orchard Fruit'},
+    {n:'Strawberry',c:'Orchard Fruit'},{n:'Avocado',c:'Orchard Fruit'},
+    {n:'Dragon Fruit',c:'Orchard Fruit'},{n:'Fig',c:'Orchard Fruit'},
+    {n:'Jamun / Indian Blackberry',c:'Orchard Fruit'},
+  ],
+};
+
+// Map feature types → which crop groups to show
+const FEATURE_CROP_MAP = {
+  'Agricultural Land': ['CEREALS','PULSES','OILSEEDS','SUGAR_FIBRE','FORAGE','POTENTIAL','VEGETABLES','TUBERS','SPICES_FIELD','MEDICINAL','FLOWERS_FIELD'],
+  'Fallow Land':       ['CEREALS','PULSES','OILSEEDS','SUGAR_FIBRE'],
+  'Orchard':           ['ORCHARD'],
+  'Plantation':        ['PLANTATION'],
+  'Greenhouse':        ['VEGETABLES','FLOWERS_FIELD'],
+  'Water Body':        [],
+  'Built-up':          [],
+  'Other':             ['CEREALS','PULSES','OILSEEDS','SUGAR_FIBRE','VEGETABLES','ORCHARD','PLANTATION'],
+};
+
+function getCropsForFeature(featureType) {
+  const groups = FEATURE_CROP_MAP[featureType] || ['CEREALS','PULSES','OILSEEDS','VEGETABLES'];
+  const all = [];
+  for (const g of groups) {
+    if (CROP_DB[g]) all.push(...CROP_DB[g]);
+  }
+  return all;
+}
 function onCropInput(v){
   const box=document.getElementById('csug');
-  if(!v||v.length<1){box.style.display='none';return;}
+  const featureType=getChip('ftchips')||'Agricultural Land';
+  const pool=getCropsForFeature(featureType);
+  if(!pool.length){box.style.display='none';return;}
+  if(!v||v.length<1){
+    const top=pool.slice(0,8);
+    box.innerHTML=top.map(c=>`<div class="si" onmousedown="pickCrop('${c.n.replace(/'/,"\'")}')">
+      ${c.n}<span class="sc">${c.c}</span></div>`).join('');
+    box.style.display='block';return;
+  }
   const q=v.toLowerCase();
-  const m=CROPS.filter(c=>c.n.toLowerCase().includes(q)||c.c.toLowerCase().includes(q)).slice(0,8);
+  const m=pool.filter(c=>c.n.toLowerCase().includes(q)||c.c.toLowerCase().includes(q)).slice(0,10);
   if(!m.length){box.style.display='none';return;}
   box.innerHTML=m.map(c=>`<div class="si" onmousedown="pickCrop('${c.n.replace(/'/,"\\'")}')">
     ${c.n}<span class="sc">${c.c}</span></div>`).join('');
@@ -576,7 +729,12 @@ function initMap(){
   map.on('dblclick',e=>{if(drawing){L.DomEvent.stopPropagation(e);finishDraw();}});
 }
 
-function farmCol(fid){
+// ── HOLD THRESHOLD (farms > 1.5 Ha are locked) ──
+const HOLD_HA = 1.5;
+function isLocked(feat){ return (feat.properties.Area_m2/10000) > HOLD_HA; }
+
+function farmCol(fid,feat){
+  if(feat&&isLocked(feat))return'#ff7b72'; // locked
   if(corrs[fid])return'#bc8cff';
   if(anns[fid])return'#3fb950';
   return'#8b949e';
@@ -587,13 +745,14 @@ function renderFarms(){
   if(geoLayer)map.removeLayer(geoLayer);
   const feats=geoJSON.features.filter(f=>{
     const fid=f.properties.farm_id;
-    if(filterMode==='pending')return!anns[fid];
+    if(filterMode==='pending')return!anns[fid]&&!isLocked(f);
     if(filterMode==='labeled')return!!anns[fid];
     if(filterMode==='corrected')return!!corrs[fid];
+    if(filterMode==='held')return isLocked(f);
     return true;
   });
   geoLayer=L.geoJSON({type:'FeatureCollection',features:feats},{
-    style:f=>{const fid=f.properties.farm_id,c=farmCol(fid);return{fillColor:c,fillOpacity:anns[fid]?0.55:0.28,color:c,weight:1.2};},
+    style:f=>{const fid=f.properties.farm_id,c=farmCol(fid,f),locked=isLocked(f);return{fillColor:c,fillOpacity:locked?0.35:(anns[fid]?0.55:0.28),color:c,weight:locked?1.5:1.2,dashArray:locked?'5,3':null};},
     onEachFeature:(f,l)=>l.on('click',e=>{L.DomEvent.stopPropagation(e);selectFarm(f,l);})
   }).addTo(map);
 }
@@ -602,6 +761,7 @@ function renderFarms(){
 function selectFarm(feat,layer){
   if(drawing)return;
   if(selLayer)resetStyle(selLayer);
+  const locked=isLocked(feat);
   selLayer=layer;selFeat=feat;
   layer.setStyle({fillColor:'#58a6ff',fillOpacity:.5,color:'#58a6ff',weight:2.5});
   const p=feat.properties,fid=p.farm_id;
@@ -621,6 +781,12 @@ function selectFarm(feat,layer){
     </div>
     <div class="cbar"><div class="cbarf" style="width:${conf*100}%;background:${cc}"></div></div>`;
 
+  // Show/hide lock banner
+  const lb=document.getElementById('lockb');
+  if(locked){
+    lb.classList.add('show');
+    document.getElementById('locktxt').textContent='Farm '+((feat.properties.Area_m2/10000).toFixed(2))+' Ha — above 1.5 Ha hold threshold, not for labelling';
+  }else{lb.classList.remove('show');}
   const cb=document.getElementById('corrb');
   const db=document.getElementById('drawbtn');
   if(corr){
@@ -635,14 +801,21 @@ function selectFarm(feat,layer){
   }
 
   if(ann)fillForm(ann);else resetFormFields();
+  // Grey-out form when locked
+  document.getElementById('aform').style.opacity=locked?'0.4':'1';
+  document.getElementById('aform').style.pointerEvents=locked?'none':'auto';
+  document.getElementById('bsave').disabled=locked;
+  document.getElementById('breset').disabled=locked;
+  document.getElementById('drawbtn').style.pointerEvents=locked?'none':'auto';
+  document.getElementById('drawbtn').style.opacity=locked?'0.4':'1';
   document.getElementById('panel').classList.add('visible');
   map.panTo(layer.getBounds().getCenter());
 }
 
 function resetStyle(l){
   if(!l||!l.feature)return;
-  const fid=l.feature.properties.farm_id,c=farmCol(fid);
-  l.setStyle({fillColor:c,fillOpacity:anns[fid]?0.55:0.28,color:c,weight:1.2});
+  const fid=l.feature.properties.farm_id,feat=l.feature,locked=isLocked(feat),c=farmCol(fid,feat);
+  l.setStyle({fillColor:c,fillOpacity:locked?0.35:(anns[fid]?0.55:0.28),color:c,weight:locked?1.5:1.2,dashArray:locked?'5,3':null});
 }
 
 // ── DRAW MODE ─────────────────────────────────
@@ -744,7 +917,7 @@ function advanceNext(){
   const all=geoJSON.features;
   const ci=all.findIndex(f=>f.properties.farm_id===selFeat?.properties.farm_id);
   for(let i=ci+1;i<all.length;i++){
-    if(!anns[all[i].properties.farm_id]){
+    if(!anns[all[i].properties.farm_id]&&!isLocked(all[i])){
       geoLayer.eachLayer(l=>{
         if(l.feature?.properties.farm_id===all[i].properties.farm_id){
           map.panTo(l.getBounds().getCenter());selectFarm(all[i],l);
@@ -776,7 +949,23 @@ function resetFormFields(){
   if(!document.getElementById('dateinput').value)
     document.getElementById('dateinput').value=new Date().toISOString().split('T')[0];
 }
-function selChip(el,gid){document.querySelectorAll(`#${gid} .chip`).forEach(c=>c.classList.remove('active'));el.classList.add('active');}
+function selChip(el,gid){
+  document.querySelectorAll(`#${gid} .chip`).forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  // When feature type changes, refresh crop suggestions & update placeholder
+  if(gid==='ftchips'){
+    const ft=el.dataset.val;
+    const inp=document.getElementById('cropinput');
+    const pool=getCropsForFeature(ft);
+    if(pool.length>0){
+      inp.placeholder='e.g. '+pool.slice(0,3).map(c=>c.n).join(', ')+'…';
+    } else {
+      inp.placeholder='N/A for this feature type';
+    }
+    inp.value='';
+    document.getElementById('csug').style.display='none';
+  }
+}
 function getChip(gid){return document.querySelector(`#${gid} .chip.active`)?.dataset.val||'';}
 function setChip(gid,v){document.querySelectorAll(`#${gid} .chip`).forEach(c=>c.classList.toggle('active',c.dataset.val===v));}
 function selStage(el){document.querySelectorAll('.stg').forEach(b=>b.classList.remove('active'));el.classList.add('active');curStage=el.dataset.val;}
@@ -799,12 +988,15 @@ function setTg(gid,v){document.querySelectorAll(`#${gid} .tg`).forEach(b=>b.clas
 // ── STATS ─────────────────────────────────────
 function updateStats(){
   const tot=geoJSON?.features.length||1793;
+  const locked=geoJSON?.features.filter(f=>isLocked(f)).length||0;
+  const eligible=tot-locked;
   const done=Object.keys(anns).length,corr=Object.keys(corrs).length;
   document.getElementById('sdone').textContent=done;
-  document.getElementById('spend').textContent=tot-done;
+  document.getElementById('spend').textContent=Math.max(0,eligible-done);
   document.getElementById('scorr').textContent=corr;
+  document.getElementById('slocked').textContent=locked;
   document.getElementById('lcount').textContent=done;
-  const pct=Math.round(done/tot*100);
+  const pct=eligible>0?Math.round(done/eligible*100):0;
   document.getElementById('pfill').style.width=pct+'%';
   document.getElementById('ppct').textContent=pct+'%';
 }
@@ -847,7 +1039,7 @@ function toggleBasemap(){
   else{map.removeLayer(satT);osmT.addTo(map);baseMode='osm';b.textContent='🛰 Satellite';}
   if(geoLayer)geoLayer.bringToFront();
 }
-const FC=['all','pending','labeled','corrected'],FL=['Show: All','Show: Pending','Show: Labeled','Show: Corrected'];
+const FC=['all','pending','labeled','corrected','held'],FL=['Show: All','Show: Pending','Show: Labeled','Show: Corrected','Show: Held (>1.5ha)'];
 function cycleFilter(){
   const i=(FC.indexOf(filterMode)+1)%FC.length;filterMode=FC[i];
   document.getElementById('mb-filter').textContent='⚡ '+FL[i];renderFarms();
@@ -880,8 +1072,8 @@ function selFmt(fmt) {
 
 function getExportFeatures(filterVal) {
   const allFeats = geoJSON?.features || [];
-  if (filterVal === 'labeled')   return allFeats.filter(f => !!anns[f.properties.farm_id]);
-  if (filterVal === 'unlabeled') return allFeats.filter(f => !anns[f.properties.farm_id]);
+  if (filterVal === 'labeled')   return allFeats.filter(f => !!anns[f.properties.farm_id]&&!isLocked(f));
+  if (filterVal === 'unlabeled') return allFeats.filter(f => !anns[f.properties.farm_id]&&!isLocked(f));
   if (filterVal === 'corrected') return allFeats.filter(f => !!corrs[f.properties.farm_id]);
   return allFeats; // all
 }
